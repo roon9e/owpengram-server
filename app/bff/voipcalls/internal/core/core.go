@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	mrand "math/rand"
 	"time"
 
 	"github.com/zeromicro/go-zero/core/logx"
@@ -55,7 +56,7 @@ func (c *VoipCallsCore) userPairKey(a, b int64) string {
 	return fmt.Sprintf("%d:%d", b, a)
 }
 
-func (c *VoipCallsCore) getUsersForResponse(userIDs ...int64) []*mtproto.User {
+func (c *VoipCallsCore) getUsersForResponseFor(viewerUserID int64, userIDs ...int64) []*mtproto.User {
 	mUsers, err := c.svcCtx.Dao.UserClient.UserGetMutableUsers(c.ctx, &userpb.TLUserGetMutableUsers{
 		Id: userIDs,
 		To: []int64{},
@@ -63,15 +64,32 @@ func (c *VoipCallsCore) getUsersForResponse(userIDs ...int64) []*mtproto.User {
 	if err != nil || mUsers == nil {
 		return []*mtproto.User{}
 	}
-	return mUsers.GetUserListByIdList(c.MD.UserId, userIDs...)
+	return mUsers.GetUserListByIdList(viewerUserID, userIDs...)
 }
 
-func (c *VoipCallsCore) pushCallUpdate(userID int64, phoneCall *mtproto.PhoneCall, users []*mtproto.User) {
+func (c *VoipCallsCore) getOrDefaultProtocol(protocol *mtproto.PhoneCallProtocol) *mtproto.PhoneCallProtocol {
+	if protocol != nil {
+		return protocol
+	}
+	return mtproto.MakeTLPhoneCallProtocol(&mtproto.PhoneCallProtocol{
+		UdpP2P:          true,
+		UdpReflector:    true,
+		MinLayer:        65,
+		MaxLayer:        200,
+		LibraryVersions: []string{"2.4.4"},
+	}).To_PhoneCallProtocol()
+}
+
+func (c *VoipCallsCore) pushCallUpdate(userID int64, phoneCall *mtproto.PhoneCall) {
 	update := mtproto.MakeTLUpdatePhoneCall(&mtproto.Update{
 		PhoneCall: phoneCall,
 	}).To_Update()
 	push := mtproto.MakeUpdatesByUpdates(update)
-	push.Users = users
+	push.Users = c.getUsersForResponseFor(
+		userID,
+		phoneCall.GetAdminId(),
+		phoneCall.GetParticipantId(),
+	)
 	_, _ = c.svcCtx.Dao.SyncClient.SyncPushUpdates(c.ctx, &sync.TLSyncPushUpdates{
 		UserId:  userID,
 		Updates: push,
@@ -124,6 +142,40 @@ func (c *VoipCallsCore) relayConnections() []*mtproto.PhoneConnection {
 	return connections
 }
 
+func (c *VoipCallsCore) pushCallHistoryMessage(ownerID, peerID, fromID int64, out bool, callID int64, video bool, reason *mtproto.PhoneCallDiscardReason, duration int32) {
+	serviceMessage := mtproto.MakeTLMessageService(&mtproto.Message{
+		Out:         out,
+		Mentioned:   false,
+		MediaUnread: false,
+		Silent:      false,
+		Id:          0,
+		FromId:      mtproto.MakePeerUser(fromID),
+		PeerId:      mtproto.MakePeerUser(peerID),
+		Date:        c.nowUnix(),
+		Action: mtproto.MakeTLMessageActionPhoneCall(&mtproto.MessageAction{
+			Video:    video,
+			CallId:   callID,
+			Reason:   reason,
+			Duration: wrapperspb.Int32(duration),
+		}).To_MessageAction(),
+	}).To_Message()
+
+	_, _ = c.svcCtx.Dao.MsgClient.MsgPushUserMessage(c.ctx, &msg.TLMsgPushUserMessage{
+		UserId:    ownerID,
+		AuthKeyId: 0,
+		PeerType:  mtproto.PEER_USER,
+		PeerId:    peerID,
+		PushType:  1,
+		Message: msg.MakeTLOutboxMessage(&msg.OutboxMessage{
+			NoWebpage:    false,
+			Background:   false,
+			RandomId:     mrand.Int63(),
+			Message:      serviceMessage,
+			ScheduleDate: nil,
+		}).To_OutboxMessage(),
+	})
+}
+
 func (c *VoipCallsCore) PhoneGetCallConfig(_ *mtproto.TLPhoneGetCallConfig) (*mtproto.DataJSON, error) {
 	data := c.svcCtx.Config.VoipCallConfigJSON
 	if data == "" {
@@ -147,7 +199,7 @@ func (c *VoipCallsCore) PhoneRequestCall(in *mtproto.TLPhoneRequestCall) (*mtpro
 		Video:         in.Video,
 		Date:          now,
 		State:         svc.CallStateRequested,
-		Protocol:      in.Protocol,
+		Protocol:      c.getOrDefaultProtocol(in.Protocol),
 		GAHash:        in.GAHash,
 	}
 
@@ -157,7 +209,6 @@ func (c *VoipCallsCore) PhoneRequestCall(in *mtproto.TLPhoneRequestCall) (*mtpro
 	c.svcCtx.CallsByUserKey[key] = call.ID
 	c.svcCtx.Mu.Unlock()
 
-	users := c.getUsersForResponse(call.AdminID, call.ParticipantID)
 	requested := mtproto.MakeTLPhoneCallRequested(&mtproto.PhoneCall{
 		Video:         call.Video,
 		Id:            call.ID,
@@ -166,9 +217,9 @@ func (c *VoipCallsCore) PhoneRequestCall(in *mtproto.TLPhoneRequestCall) (*mtpro
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
 		GAHash:        call.GAHash,
-		Protocol:      in.Protocol,
+		Protocol:      call.Protocol,
 	}).To_PhoneCall()
-	c.pushCallUpdate(call.ParticipantID, requested, users)
+	c.pushCallUpdate(call.ParticipantID, requested)
 
 	waiting := mtproto.MakeTLPhoneCallWaiting(&mtproto.PhoneCall{
 		Video:         call.Video,
@@ -177,12 +228,12 @@ func (c *VoipCallsCore) PhoneRequestCall(in *mtproto.TLPhoneRequestCall) (*mtpro
 		Date:          call.Date,
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
-		Protocol:      in.Protocol,
+		Protocol:      call.Protocol,
 	}).To_PhoneCall()
 
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: waiting,
-		Users:     users,
+		Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
 	}).To_Phone_PhoneCall(), nil
 }
 
@@ -198,8 +249,7 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 	}
 	call.State = svc.CallStateAccepted
 	call.GB = in.GB
-	call.Protocol = in.Protocol
-	users := c.getUsersForResponse(call.AdminID, call.ParticipantID)
+	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
 	accepted := mtproto.MakeTLPhoneCallAccepted(&mtproto.PhoneCall{
 		Video:         call.Video,
 		Id:            call.ID,
@@ -208,7 +258,7 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
 		GB:            call.GB,
-		Protocol:      in.Protocol,
+		Protocol:      call.Protocol,
 	}).To_PhoneCall()
 	waiting := mtproto.MakeTLPhoneCallWaiting(&mtproto.PhoneCall{
 		Video:         call.Video,
@@ -217,14 +267,14 @@ func (c *VoipCallsCore) PhoneAcceptCall(in *mtproto.TLPhoneAcceptCall) (*mtproto
 		Date:          call.Date,
 		AdminId:       call.AdminID,
 		ParticipantId: call.ParticipantID,
-		Protocol:      in.Protocol,
+		Protocol:      call.Protocol,
 	}).To_PhoneCall()
 	c.svcCtx.Mu.Unlock()
 
-	c.pushCallUpdate(call.AdminID, accepted, users)
+	c.pushCallUpdate(call.AdminID, accepted)
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: waiting,
-		Users:     users,
+		Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
 	}).To_Phone_PhoneCall(), nil
 }
 
@@ -241,10 +291,9 @@ func (c *VoipCallsCore) PhoneConfirmCall(in *mtproto.TLPhoneConfirmCall) (*mtpro
 	call.State = svc.CallStateEstablished
 	call.GA = in.GA
 	call.KeyFingerprint = in.KeyFingerprint
-	call.Protocol = in.Protocol
+	call.Protocol = c.getOrDefaultProtocol(in.Protocol)
 	call.StartDate = c.nowUnix()
 	connections := c.relayConnections()
-	users := c.getUsersForResponse(call.AdminID, call.ParticipantID)
 	established := mtproto.MakeTLPhoneCall(&mtproto.PhoneCall{
 		Video:               call.Video,
 		P2PAllowed:          true,
@@ -256,16 +305,16 @@ func (c *VoipCallsCore) PhoneConfirmCall(in *mtproto.TLPhoneConfirmCall) (*mtpro
 		ParticipantId:       call.ParticipantID,
 		GAOrB:               call.GA,
 		KeyFingerprint:      call.KeyFingerprint,
-		Protocol:            in.Protocol,
+		Protocol:            call.Protocol,
 		Connections:         connections,
 		StartDate:           call.StartDate,
 	}).To_PhoneCall()
 	c.svcCtx.Mu.Unlock()
 
-	c.pushCallUpdate(call.ParticipantID, established, users)
+	c.pushCallUpdate(call.ParticipantID, established)
 	return mtproto.MakeTLPhonePhoneCall(&mtproto.Phone_PhoneCall{
 		PhoneCall: established,
-		Users:     users,
+		Users:     c.getUsersForResponseFor(c.MD.UserId, call.AdminID, call.ParticipantID),
 	}).To_Phone_PhoneCall(), nil
 }
 
@@ -277,7 +326,6 @@ func (c *VoipCallsCore) PhoneReceivedCall(in *mtproto.TLPhoneReceivedCall) (*mtp
 		call.State = svc.CallStateWaitingIncoming
 		receiveDate := c.nowUnix()
 		call.Date = call.Date
-		users := c.getUsersForResponse(call.AdminID, call.ParticipantID)
 		waiting := mtproto.MakeTLPhoneCallWaiting(&mtproto.PhoneCall{
 			Video:         call.Video,
 			Id:            call.ID,
@@ -289,7 +337,7 @@ func (c *VoipCallsCore) PhoneReceivedCall(in *mtproto.TLPhoneReceivedCall) (*mtp
 			ReceiveDate:   wrapperspb.Int32(receiveDate),
 		}).To_PhoneCall()
 		c.svcCtx.Mu.Unlock()
-		c.pushCallUpdate(call.AdminID, waiting, users)
+		c.pushCallUpdate(call.AdminID, waiting)
 		return mtproto.BoolTrue, nil
 	}
 	c.svcCtx.Mu.Unlock()
@@ -318,13 +366,19 @@ func (c *VoipCallsCore) PhoneDiscardCall(in *mtproto.TLPhoneDiscardCall) (*mtpro
 		Reason:     in.Reason,
 		Duration:   wrapperspb.Int32(in.Duration),
 	}).To_PhoneCall()
-	users := c.getUsersForResponse(call.AdminID, call.ParticipantID)
+	actorID := c.MD.UserId
+	peerID := call.ParticipantID
+	if actorID != call.AdminID {
+		peerID = call.AdminID
+	}
 	delete(c.svcCtx.CallsByID, call.ID)
 	delete(c.svcCtx.CallsByUserKey, c.userPairKey(call.AdminID, call.ParticipantID))
 	c.svcCtx.Mu.Unlock()
 
-	c.pushCallUpdate(call.AdminID, discarded, users)
-	c.pushCallUpdate(call.ParticipantID, discarded, users)
+	c.pushCallUpdate(call.AdminID, discarded)
+	c.pushCallUpdate(call.ParticipantID, discarded)
+	c.pushCallHistoryMessage(actorID, peerID, actorID, true, call.ID, call.Video, in.Reason, in.Duration)
+	c.pushCallHistoryMessage(peerID, actorID, actorID, false, call.ID, call.Video, in.Reason, in.Duration)
 	return mtproto.MakeUpdatesByUpdates(mtproto.MakeTLUpdatePhoneCall(&mtproto.Update{
 		PhoneCall: discarded,
 	}).To_Update()), nil

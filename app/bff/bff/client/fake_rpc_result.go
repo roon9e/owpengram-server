@@ -208,10 +208,13 @@ func (c *BFFProxyClient) TryReturnFakeRpcResult(ctx context.Context, object mtpr
 			Sets:   []*mtproto.StickerSetCovered{},
 			Unread: []int64{},
 		}).To_Messages_FeaturedStickers(), nil
-	//case "TLMessagesGetStickerSet":
-	//	// logx.WithContext(ct)
-	//	return nil, mtproto.ErrMethodNotImpl
-	//	// return mtproto.MakeTLMessagesStickerSetNotModified(&mtproto.Messages_StickerSet{}).To_Messages_StickerSet(), nil
+	case "TLMessagesGetStickerSet":
+		return mtproto.MakeTLMessagesStickerSet(&mtproto.Messages_StickerSet{
+			Set:       mtproto.MakeTLStickerSet(&mtproto.StickerSet{}).To_StickerSet(),
+			Packs:     []*mtproto.StickerPack{},
+			Keywords:  []*mtproto.StickerKeyword{},
+			Documents: []*mtproto.Document{},
+		}).To_Messages_StickerSet(), nil
 
 	// 	scheduledmessages
 	case "TLMessagesGetScheduledMessages":
