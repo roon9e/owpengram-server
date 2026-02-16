@@ -317,6 +317,14 @@ func (c *VoipCallsCore) PhoneRequestCall(in *mtproto.TLPhoneRequestCall) (*mtpro
 		return nil, mtproto.ErrUserIdInvalid
 	}
 
+	// patch by onysd
+	// Block calling service account 42777 (user ID 777000)
+	if participantID == 777000 {
+		c.Logger.Errorf("PhoneRequestCall - cannot call service account 42777")
+		return nil, mtproto.ErrUserPrivacyRestricted
+	}
+	// end patch
+
 	now := c.nowUnix()
 	call := &svc.PrivateCallSession{
 		ID:            c.randomInt64(),

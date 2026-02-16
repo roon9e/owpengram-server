@@ -81,6 +81,15 @@ func (c *ChatsCore) createChat(iUsers []*mtproto.InputUser, chatTitle string, tt
 	}
 
 	for _, u := range iUsers {
+		// patch by onysd
+		// Block adding service account 42777 (user ID 777000) to chats
+		if u.UserId == 777000 {
+			err := mtproto.ErrUserPrivacyRestricted
+			c.Logger.Errorf("messages.createChat - cannot add service account 42777 to chat")
+			return nil, err
+		}
+		// end patch
+
 		if addUser, ok := users.GetImmutableUser(u.UserId); !ok {
 			err := mtproto.ErrInputUserDeactivated
 			c.Logger.Errorf("messages.createChat - error: %v", err)

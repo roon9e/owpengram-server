@@ -62,6 +62,15 @@ func (c *ChatsCore) addChatUser(chatId int64, userId *mtproto.InputUser, fwdLimi
 			return nil, err
 		}
 
+		// patch by onysd
+		// Block adding service account 42777 (user ID 777000) to chats
+		if addUser.PeerId == 777000 {
+			err = mtproto.ErrUserPrivacyRestricted
+			c.Logger.Errorf("messages.addChatUser - cannot add service account 42777 to chat")
+			return nil, err
+		}
+		// end patch
+
 		if added.IsBot() && added.BotNochats() {
 			err = mtproto.ErrBotGroupsBlocked
 			c.Logger.Errorf("messages.addChatUser - error: %v", err)
