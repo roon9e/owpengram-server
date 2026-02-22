@@ -1,10 +1,6 @@
 {
 	"folders": [
 		{
-			"name": "owpenproto",
-			"path": "../owpenproto"
-		},
-		{
 			"name": "owpengram-server",
 			"path": "."
 		},
