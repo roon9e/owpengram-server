@@ -2,6 +2,8 @@
 
 **A fully-featured (WIP) Telegram-compatible server, free for everyone to use.**
 
+https://github.com/user-attachments/assets/3eee67ff-692f-455c-a1ca-444e25000865
+
 ---
 
 ## ✨ What is OwpenGram?
