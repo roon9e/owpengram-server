@@ -103,7 +103,10 @@ const (
 
 This code can be used to log in to your %s account. We never ask it for anything else.
 
-If you didn't request this code by trying to log in on another device, simply ignore this message.`
+If you didn't request this code by trying to log in on another device, simply ignore this message.
+
+Also join our test discussion chat: @owpengramchat
+`
 )
 
 func (c *AuthorizationCore) pushSignInMessage(ctx context.Context, signInUserId int64, code string) {
