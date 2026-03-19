@@ -151,6 +151,15 @@ func (c *ChatsCore) createChat(iUsers []*mtproto.InputUser, chatTitle string, tt
 		return nil, err
 	}
 
+	// Only include TtlPeriod in the chat create service message when it is explicitly
+	// set to a positive value. Zero or nil should be treated as "no TTL set".
+	var ttlPeriodForCreate *wrapperspb.Int32Value
+	if ttlPeriod != nil && ttlPeriod.Value > 0 {
+		ttlPeriodForCreate = ttlPeriod
+	} else {
+		ttlPeriodForCreate = nil
+	}
+
 	outMessages := []*msgpb.OutboxMessage{
 		msgpb.MakeTLOutboxMessage(&msgpb.OutboxMessage{
 			NoWebpage:  true,
@@ -177,12 +186,12 @@ func (c *ChatsCore) createChat(iUsers []*mtproto.InputUser, chatTitle string, tt
 					Users:            append(userAddList, botAddList...),
 				}).To_MessageAction(),
 				Reactions: nil,
-				TtlPeriod: ttlPeriod,
+				TtlPeriod: ttlPeriodForCreate,
 			}).To_Message(),
 			ScheduleDate: nil,
 		}).To_OutboxMessage(),
 	}
-	if ttlPeriod != nil {
+	if ttlPeriodForCreate != nil {
 		outMessages = append(outMessages, msgpb.MakeTLOutboxMessage(&msgpb.OutboxMessage{
 			NoWebpage:  true,
 			Background: false,
@@ -202,7 +211,7 @@ func (c *ChatsCore) createChat(iUsers []*mtproto.InputUser, chatTitle string, tt
 				ReplyTo:              nil,
 				Date:                 int32(time.Now().Unix()),
 				Action: mtproto.MakeTLMessageActionSetMessagesTTL(&mtproto.MessageAction{
-					Period:          ttlPeriod.Value,
+					Period:          ttlPeriodForCreate.Value,
 					AutoSettingFrom: mtproto.MakeFlagsInt64(c.MD.UserId),
 				}).To_MessageAction(),
 				Reactions: nil,
