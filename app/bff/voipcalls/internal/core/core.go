@@ -253,7 +253,7 @@ func (c *VoipCallsCore) relayConnections() []*mtproto.PhoneConnection {
 		if id == 0 {
 			id = int64(idx + 1)
 		}
-		connections = append(connections, mtproto.MakeTLPhoneConnection(&mtproto.PhoneConnection{
+		conn := &mtproto.PhoneConnection{
 			Tcp:      endpoint.Tcp,
 			Id:       id,
 			Ip:       endpoint.Ip,
@@ -264,7 +264,17 @@ func (c *VoipCallsCore) relayConnections() []*mtproto.PhoneConnection {
 			Stun:     endpoint.Stun,
 			Username: endpoint.Username,
 			Password: endpoint.Password,
-		}).To_PhoneConnection())
+		}
+		// A standard TURN/STUN server (coturn) speaks WebRTC TURN, not the
+		// legacy Telegram MTProto-reflector protocol. tgcalls only talks TURN
+		// to it when the endpoint is sent as phoneConnectionWebrtc; the legacy
+		// phoneConnection type drops turn/stun/username/password and makes the
+		// client speak the reflector protocol (which coturn silently ignores).
+		if endpoint.Turn || endpoint.Stun {
+			connections = append(connections, mtproto.MakeTLPhoneConnectionWebrtc(conn).To_PhoneConnection())
+		} else {
+			connections = append(connections, mtproto.MakeTLPhoneConnection(conn).To_PhoneConnection())
+		}
 	}
 	return connections
 }
