@@ -38,7 +38,7 @@ rem --- compose env (consumed by the coturn service) ---------------------
 >> "%ENV_FILE%" echo TURN_SECRET=!TURN_SECRET!
 
 rem --- bake public address + TURN secret into the server config ---------
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip='%PUBLIC_IP%'; $sec='!TURN_SECRET!'; $f=(Resolve-Path '%BFF%').Path; $t=(Get-Content $f) -replace '^(\s*Ip:\s*).*$', ('${1}'+$ip) -replace '^(\s*Password:\s*).*$', ('${1}\"'+$sec+'\"'); $enc=New-Object System.Text.UTF8Encoding($false); [IO.File]::WriteAllLines($f,$t,$enc)"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ip='%PUBLIC_IP%'; $sec='!TURN_SECRET!'; $f=(Resolve-Path '%BFF%').Path; $enc=New-Object System.Text.UTF8Encoding($false); $t=[System.IO.File]::ReadAllText($f); $t=$t.TrimStart([char]0xFEFF); $t=$t -replace '(?m)^(\s*Ip:\s*).*$', ('${1}'+$ip); $t=$t -replace '(?m)^(\s*Password:\s*).*$', ('${1}\"'+$sec+'\"'); [System.IO.File]::WriteAllText($f,$t,$enc)"
 if %ERRORLEVEL% neq 0 (
   echo [ERROR] failed to update %BFF%
   pause
