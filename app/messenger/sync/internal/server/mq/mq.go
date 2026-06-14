@@ -70,6 +70,19 @@ func New(svcCtx *svc.ServiceContext, conf kafka.KafkaConsumerConf) *kafka.Consum
 
 					c.SyncPushUpdates(r)
 				})
+			case proto.MessageName((*sync.TLSyncPushUpdatesIfNot)(nil)):
+				threading.RunSafe(func() {
+					c := core.New(ctx, svcCtx)
+
+					r := new(sync.TLSyncPushUpdatesIfNot)
+					if err := json.Unmarshal(value, r); err != nil {
+						c.Logger.Error(err.Error())
+						return
+					}
+					c.Logger.Debugf("sync.pushUpdatesIfNot - request: %s", r)
+
+					c.SyncPushUpdatesIfNot(r)
+				})
 			case proto.MessageName((*sync.TLSyncPushRpcResult)(nil)):
 				threading.RunSafe(func() {
 					c := core.New(ctx, svcCtx)
