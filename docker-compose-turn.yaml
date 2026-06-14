@@ -25,5 +25,12 @@ services:
       - --no-tls
       - --no-dtls
       - --no-cli
+      # Log to the container's stdout so `docker logs` / Docker Desktop show it.
+      # coturn defaults to a logfile inside the container (hence "no logs").
+      # --verbose prints auth + relay-allocation events (useful to debug calls);
+      # drop it once everything works to reduce noise.
+      - --log-file=stdout
+      - --simple-log
+      - --verbose
       - --external-ip=${PUBLIC_IP:-127.0.0.1}
       - --user=owpengram:${TURN_SECRET:-changeme}
