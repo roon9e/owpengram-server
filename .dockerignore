@@ -1,0 +1,30 @@
+# Runtime data volumes (MySQL/Redis/MinIO/etc). This is ~11GB and contains unix
+# sockets (e.g. data/mysql/mysql.sock) that Docker cannot transfer — including it
+# both bloats the build context and fails the build with "invalid file request".
+# These are mounted at runtime via docker-compose volumes, never baked into the image.
+data/
+
+# VCS & editor
+.git/
+.gitignore
+.idea/
+.vscode/
+*.iml
+*.code-workspace
+
+# Secrets & generated runtime config — must never end up inside the image
+.env
+.public_ip
+.turn_secret
+coturn/turnserver.conf
+
+# Logs & local build artifacts
+*.log
+logs/
+teamgramd/logs/
+out/
+dist/
+*.bak
+
+# Docs (not needed to build the server)
+*.md
