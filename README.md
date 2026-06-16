@@ -7,6 +7,8 @@ own. Run it on your laptop for a private network, or on a VPS to be reachable
 anywhere in the world. Your data, your keys, your rules — no cloud, no lock-in,
 no censorship.
 
+> 🔗 Implements **MTProto API layer 222**.
+
 > 📸 _Screenshot placeholder — to be added._
 
 ---
