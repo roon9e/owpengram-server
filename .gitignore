@@ -71,3 +71,7 @@ nul
 .turn_secret
 coturn/turnserver.conf
 .env_profile
+docs/specs
+
+.pending
+AGENTS.md

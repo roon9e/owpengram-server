@@ -15,18 +15,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"strings"
 
 	"github.com/teamgram/marmota/pkg/stores/sqlx"
 	"github.com/teamgram/teamgram-server/app/service/authsession/internal/dal/dataobject"
 
 	"github.com/zeromicro/go-zero/core/logx"
 )
-
-var _ *sql.Result
-var _ = fmt.Sprintf
-var _ = strings.Join
-var _ = errors.Is
 
 type AuthUsersDAO struct {
 	db *sqlx.DB
@@ -39,12 +33,13 @@ func NewAuthUsersDAO(db *sqlx.DB) *AuthUsersDAO {
 }
 
 // InsertOrUpdates
-// insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), user_id = values(user_id), date_active = values(date_active), deleted = 0
+// insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), date_active = values(date_active), deleted = 0
 func (dao *AuthUsersDAO) InsertOrUpdates(ctx context.Context, do *dataobject.AuthUsersDO) (lastInsertId, rowsAffected int64, err error) {
 	var (
-		query = "insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), user_id = values(user_id), date_active = values(date_active), deleted = 0"
+		query string
 		r     sql.Result
 	)
+	query = "insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), date_active = values(date_active), deleted = 0"
 
 	r, err = dao.db.NamedExec(ctx, query, do)
 	if err != nil {
@@ -54,24 +49,25 @@ func (dao *AuthUsersDAO) InsertOrUpdates(ctx context.Context, do *dataobject.Aut
 
 	lastInsertId, err = r.LastInsertId()
 	if err != nil {
-		logx.WithContext(ctx).Errorf("lastInsertId in InsertOrUpdates(%v)_error: %v", do, err)
+		logx.WithContext(ctx).Errorf("lastInsertId in InsertOrUpdates(%v), error: %v", do, err)
 		return
 	}
 	rowsAffected, err = r.RowsAffected()
 	if err != nil {
-		logx.WithContext(ctx).Errorf("rowsAffected in InsertOrUpdates(%v)_error: %v", do, err)
+		logx.WithContext(ctx).Errorf("rowsAffected in InsertOrUpdates(%v), error: %v", do, err)
 	}
 
 	return
 }
 
 // InsertOrUpdatesTx
-// insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), user_id = values(user_id), date_active = values(date_active), deleted = 0
+// insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), date_active = values(date_active), deleted = 0
 func (dao *AuthUsersDAO) InsertOrUpdatesTx(tx *sqlx.Tx, do *dataobject.AuthUsersDO) (lastInsertId, rowsAffected int64, err error) {
 	var (
-		query = "insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), user_id = values(user_id), date_active = values(date_active), deleted = 0"
+		query string
 		r     sql.Result
 	)
+	query = "insert into auth_users(auth_key_id, user_id, hash, date_created, date_active) values (:auth_key_id, :user_id, :hash, :date_created, :date_active) on duplicate key update hash = values(hash), date_active = values(date_active), deleted = 0"
 
 	r, err = tx.NamedExec(query, do)
 	if err != nil {
@@ -81,12 +77,12 @@ func (dao *AuthUsersDAO) InsertOrUpdatesTx(tx *sqlx.Tx, do *dataobject.AuthUsers
 
 	lastInsertId, err = r.LastInsertId()
 	if err != nil {
-		logx.WithContext(tx.Context()).Errorf("lastInsertId in InsertOrUpdates(%v)_error: %v", do, err)
+		logx.WithContext(tx.Context()).Errorf("lastInsertId in InsertOrUpdates(%v), error: %v", do, err)
 		return
 	}
 	rowsAffected, err = r.RowsAffected()
 	if err != nil {
-		logx.WithContext(tx.Context()).Errorf("rowsAffected in InsertOrUpdates(%v)_error: %v", do, err)
+		logx.WithContext(tx.Context()).Errorf("rowsAffected in InsertOrUpdates(%v), error: %v", do, err)
 	}
 
 	return
@@ -96,9 +92,11 @@ func (dao *AuthUsersDAO) InsertOrUpdatesTx(tx *sqlx.Tx, do *dataobject.AuthUsers
 // select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where auth_key_id = :auth_key_id and deleted = 0
 func (dao *AuthUsersDAO) Select(ctx context.Context, authKeyId int64) (rValue *dataobject.AuthUsersDO, err error) {
 	var (
-		query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where auth_key_id = ? and deleted = 0"
+		query string
 		do    = &dataobject.AuthUsersDO{}
 	)
+	query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where auth_key_id = ? and deleted = 0"
+
 	err = dao.db.QueryRowPartial(ctx, do, query, authKeyId)
 
 	if err != nil {
@@ -106,6 +104,7 @@ func (dao *AuthUsersDAO) Select(ctx context.Context, authKeyId int64) (rValue *d
 			logx.WithContext(ctx).Errorf("queryx in Select(_), error: %v", err)
 			return
 		} else {
+			// not found not error, return nil, nil
 			err = nil
 		}
 	} else {
@@ -119,9 +118,10 @@ func (dao *AuthUsersDAO) Select(ctx context.Context, authKeyId int64) (rValue *d
 // update auth_users set android_push_session_id = :android_push_session_id where auth_key_id = :auth_key_id and user_id = :user_id
 func (dao *AuthUsersDAO) UpdateAndroidPushSessionId(ctx context.Context, androidPushSessionId int64, authKeyId int64, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set android_push_session_id = ? where auth_key_id = ? and user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set android_push_session_id = ? where auth_key_id = ? and user_id = ?"
 
 	rResult, err = dao.db.Exec(ctx, query, androidPushSessionId, authKeyId, userId)
 
@@ -142,9 +142,11 @@ func (dao *AuthUsersDAO) UpdateAndroidPushSessionId(ctx context.Context, android
 // update auth_users set android_push_session_id = :android_push_session_id where auth_key_id = :auth_key_id and user_id = :user_id
 func (dao *AuthUsersDAO) UpdateAndroidPushSessionIdTx(tx *sqlx.Tx, androidPushSessionId int64, authKeyId int64, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set android_push_session_id = ? where auth_key_id = ? and user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set android_push_session_id = ? where auth_key_id = ? and user_id = ?"
+
 	rResult, err = tx.Exec(query, androidPushSessionId, authKeyId, userId)
 
 	if err != nil {
@@ -164,9 +166,11 @@ func (dao *AuthUsersDAO) UpdateAndroidPushSessionIdTx(tx *sqlx.Tx, androidPushSe
 // select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = :user_id and deleted = 0
 func (dao *AuthUsersDAO) SelectAuthKeyIds(ctx context.Context, userId int64) (rList []dataobject.AuthUsersDO, err error) {
 	var (
-		query  = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+		query  string
 		values []dataobject.AuthUsersDO
 	)
+	query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+
 	err = dao.db.QueryRowsPartial(ctx, &values, query, userId)
 
 	if err != nil {
@@ -183,9 +187,11 @@ func (dao *AuthUsersDAO) SelectAuthKeyIds(ctx context.Context, userId int64) (rL
 // select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = :user_id and deleted = 0
 func (dao *AuthUsersDAO) SelectAuthKeyIdsWithCB(ctx context.Context, userId int64, cb func(sz, i int, v *dataobject.AuthUsersDO)) (rList []dataobject.AuthUsersDO, err error) {
 	var (
-		query  = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+		query  string
 		values []dataobject.AuthUsersDO
 	)
+	query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+
 	err = dao.db.QueryRowsPartial(ctx, &values, query, userId)
 
 	if err != nil {
@@ -197,7 +203,7 @@ func (dao *AuthUsersDAO) SelectAuthKeyIdsWithCB(ctx context.Context, userId int6
 
 	if cb != nil {
 		sz := len(rList)
-		for i := 0; i < sz; i++ {
+		for i := range sz {
 			cb(sz, i, &rList[i])
 		}
 	}
@@ -208,14 +214,15 @@ func (dao *AuthUsersDAO) SelectAuthKeyIdsWithCB(ctx context.Context, userId int6
 // DeleteByHashList
 // update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (:idList)
 func (dao *AuthUsersDAO) DeleteByHashList(ctx context.Context, idList []int64) (rowsAffected int64, err error) {
-	var (
-		query   = fmt.Sprintf("update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (%s)", sqlx.InInt64List(idList))
-		rResult sql.Result
-	)
-
 	if len(idList) == 0 {
 		return
 	}
+
+	var (
+		query   string
+		rResult sql.Result
+	)
+	query = fmt.Sprintf("update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (%s)", sqlx.InInt64List(idList))
 
 	rResult, err = dao.db.Exec(ctx, query)
 
@@ -235,14 +242,14 @@ func (dao *AuthUsersDAO) DeleteByHashList(ctx context.Context, idList []int64) (
 // DeleteByHashListTx
 // update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (:idList)
 func (dao *AuthUsersDAO) DeleteByHashListTx(tx *sqlx.Tx, idList []int64) (rowsAffected int64, err error) {
-	var (
-		query   = fmt.Sprintf("update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (%s)", sqlx.InInt64List(idList))
-		rResult sql.Result
-	)
-
 	if len(idList) == 0 {
 		return
 	}
+	var (
+		query   string
+		rResult sql.Result
+	)
+	query = fmt.Sprintf("update auth_users set deleted = 1, date_created = 0, date_active = 0 where id in (%s)", sqlx.InInt64List(idList))
 
 	rResult, err = tx.Exec(query)
 
@@ -263,9 +270,11 @@ func (dao *AuthUsersDAO) DeleteByHashListTx(tx *sqlx.Tx, idList []int64) (rowsAf
 // select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = :user_id and deleted = 0
 func (dao *AuthUsersDAO) SelectListByUserId(ctx context.Context, userId int64) (rList []dataobject.AuthUsersDO, err error) {
 	var (
-		query  = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+		query  string
 		values []dataobject.AuthUsersDO
 	)
+	query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+
 	err = dao.db.QueryRowsPartial(ctx, &values, query, userId)
 
 	if err != nil {
@@ -282,9 +291,11 @@ func (dao *AuthUsersDAO) SelectListByUserId(ctx context.Context, userId int64) (
 // select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = :user_id and deleted = 0
 func (dao *AuthUsersDAO) SelectListByUserIdWithCB(ctx context.Context, userId int64, cb func(sz, i int, v *dataobject.AuthUsersDO)) (rList []dataobject.AuthUsersDO, err error) {
 	var (
-		query  = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+		query  string
 		values []dataobject.AuthUsersDO
 	)
+	query = "select id, auth_key_id, user_id, hash, date_created, date_active, android_push_session_id from auth_users where user_id = ? and deleted = 0"
+
 	err = dao.db.QueryRowsPartial(ctx, &values, query, userId)
 
 	if err != nil {
@@ -296,7 +307,7 @@ func (dao *AuthUsersDAO) SelectListByUserIdWithCB(ctx context.Context, userId in
 
 	if cb != nil {
 		sz := len(rList)
-		for i := 0; i < sz; i++ {
+		for i := range sz {
 			cb(sz, i, &rList[i])
 		}
 	}
@@ -308,9 +319,10 @@ func (dao *AuthUsersDAO) SelectListByUserIdWithCB(ctx context.Context, userId in
 // update auth_users set deleted = 1, date_active = 0 where auth_key_id = :auth_key_id and user_id = :user_id
 func (dao *AuthUsersDAO) Delete(ctx context.Context, authKeyId int64, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set deleted = 1, date_active = 0 where auth_key_id = ? and user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set deleted = 1, date_active = 0 where auth_key_id = ? and user_id = ?"
 
 	rResult, err = dao.db.Exec(ctx, query, authKeyId, userId)
 
@@ -331,9 +343,11 @@ func (dao *AuthUsersDAO) Delete(ctx context.Context, authKeyId int64, userId int
 // update auth_users set deleted = 1, date_active = 0 where auth_key_id = :auth_key_id and user_id = :user_id
 func (dao *AuthUsersDAO) DeleteTx(tx *sqlx.Tx, authKeyId int64, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set deleted = 1, date_active = 0 where auth_key_id = ? and user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set deleted = 1, date_active = 0 where auth_key_id = ? and user_id = ?"
+
 	rResult, err = tx.Exec(query, authKeyId, userId)
 
 	if err != nil {
@@ -353,9 +367,10 @@ func (dao *AuthUsersDAO) DeleteTx(tx *sqlx.Tx, authKeyId int64, userId int64) (r
 // update auth_users set deleted = 1, date_active = 0 where user_id = :user_id
 func (dao *AuthUsersDAO) DeleteUser(ctx context.Context, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set deleted = 1, date_active = 0 where user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set deleted = 1, date_active = 0 where user_id = ?"
 
 	rResult, err = dao.db.Exec(ctx, query, userId)
 
@@ -376,9 +391,11 @@ func (dao *AuthUsersDAO) DeleteUser(ctx context.Context, userId int64) (rowsAffe
 // update auth_users set deleted = 1, date_active = 0 where user_id = :user_id
 func (dao *AuthUsersDAO) DeleteUserTx(tx *sqlx.Tx, userId int64) (rowsAffected int64, err error) {
 	var (
-		query   = "update auth_users set deleted = 1, date_active = 0 where user_id = ?"
+		query   string
 		rResult sql.Result
 	)
+	query = "update auth_users set deleted = 1, date_active = 0 where user_id = ?"
+
 	rResult, err = tx.Exec(query, userId)
 
 	if err != nil {

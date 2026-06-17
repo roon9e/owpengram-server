@@ -61,6 +61,7 @@ enum TLConstructor {
     CRC32_chat_getRecentChatInviteRequesters = -19132264;
     CRC32_chat_hideChatJoinRequests = 1051012305;
     CRC32_chat_importChatInvite2 = -589742657;
+    CRC32_chat_editChatParticipantRank = 2075490336;
 }
 
 
@@ -422,6 +423,15 @@ message TL_chat_importChatInvite2 {
     string hash = 4;
 }
 
+//--------------------------------------------------------------------------------------------
+message TL_chat_editChatParticipantRank {
+    TLConstructor  constructor = 1;
+    int64 self_id = 3;
+    int64 chat_id = 4;
+    int64 participant = 5;
+    string rank = 6;
+}
+
 
 //--------------------------------------------------------------------------------------------
 // Vector api result type
@@ -483,5 +493,6 @@ service RPCChat {
  rpc chat_getRecentChatInviteRequesters(TL_chat_getRecentChatInviteRequesters) returns (RecentChatInviteRequesters) {}
  rpc chat_hideChatJoinRequests(TL_chat_hideChatJoinRequests) returns (RecentChatInviteRequesters) {}
  rpc chat_importChatInvite2(TL_chat_importChatInvite2) returns (ChatInviteImported) {}
+ rpc chat_editChatParticipantRank(TL_chat_editChatParticipantRank) returns (mtproto.MutableChat) {}
 }
 

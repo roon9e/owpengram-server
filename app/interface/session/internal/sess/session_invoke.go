@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/teamgram/proto/mtproto"
+	rpcmetadata "github.com/teamgram/proto/mtproto/rpc/metadata"
 
 	"github.com/zeromicro/go-zero/core/contextx"
 	"github.com/zeromicro/go-zero/core/logx"
@@ -227,7 +228,7 @@ func (c *session) onInvokeWithMessagesRange(ctx context.Context, gatewayId, clie
 		return
 	}
 
-	c.processMsg(ctx, gatewayId, clientIp, msgId, query)
+	c.onRpcRequest(ctx, gatewayId, clientIp, msgId, query, newTakeoutMetadata(0, request.GetRange()))
 }
 
 func (c *session) onInvokeWithTakeout(ctx context.Context, gatewayId, clientIp string, msgId *inboxMsg, request *mtproto.TLInvokeWithTakeout) {
@@ -255,7 +256,20 @@ func (c *session) onInvokeWithTakeout(ctx context.Context, gatewayId, clientIp s
 		return
 	}
 
-	c.processMsg(ctx, gatewayId, clientIp, msgId, query)
+	query, takeout, err := newTakeoutGuard().ValidateWrappedQuery(request.GetTakeoutId(), query)
+	if err != nil {
+		if rpcErr, ok := err.(*mtproto.TLRpcError); ok {
+			c.sendRpcResultToQueue(ctx, gatewayId, msgId.msgId, rpcErr)
+			msgId.state = RECEIVED | RESPONSE_GENERATED
+			return
+		}
+
+		c.sendRpcResultToQueue(ctx, gatewayId, msgId.msgId, mtproto.NewRpcError(mtproto.ErrInternalServerError))
+		msgId.state = RECEIVED | RESPONSE_GENERATED
+		return
+	}
+
+	c.onRpcRequest(ctx, gatewayId, clientIp, msgId, query, takeout)
 }
 
 func (c *session) onInvokeWithBusinessConnection(ctx context.Context, gatewayId, clientIp string, msgId *inboxMsg, request *mtproto.TLInvokeWithBusinessConnection) {
@@ -402,7 +416,7 @@ func (c *session) onInitConnection(ctx context.Context, gatewayId, clientIp stri
 	c.processMsg(ctx, gatewayId, clientIp, msgId, query)
 }
 
-func (c *session) onRpcRequest(ctx context.Context, gatewayId, clientIp string, msgId *inboxMsg, query mtproto.TLObject) bool {
+func (c *session) onRpcRequest(ctx context.Context, gatewayId, clientIp string, msgId *inboxMsg, query mtproto.TLObject, takeout *rpcmetadata.Takeout) bool {
 	logx.WithContext(ctx).Infof("onRpcRequest - request data: {sess: %s, gatewayId: %s, msg_id: %d, seq_no: %d, request: {%s}}",
 		c,
 		gatewayId,
@@ -465,6 +479,10 @@ func (c *session) onRpcRequest(ctx context.Context, gatewayId, clientIp string, 
 		// logx.WithContext(ctx).Infof("user.getUsers: %s", query)
 	}
 
+	if shouldRefreshAuthState(c.sessList.cb.state) {
+		c.sessList.cb.refreshAuthStateIfNeeded(ctx)
+	}
+
 	switch c.sessList.cb.state {
 	case mtproto.AuthStateNormal:
 		// state is ok
@@ -476,7 +494,7 @@ func (c *session) onRpcRequest(ctx context.Context, gatewayId, clientIp string, 
 		}
 	default:
 		if !checkRpcWithoutLogin(query) {
-			c.sendRpcResultToQueue(ctx, gatewayId, msgId.msgId, mtproto.NewRpcError(mtproto.ErrAuthKeyUnregistered))
+			c.sendRpcResultToQueue(ctx, gatewayId, msgId.msgId, mtproto.NewRpcError(rpcErrorForAuthState(c.sessList.cb.state)))
 			msgId.state = RECEIVED | RESPONSE_GENERATED
 			return false
 		}
@@ -493,9 +511,20 @@ func (c *session) onRpcRequest(ctx context.Context, gatewayId, clientIp string, 
 			clientIp:  clientIp,
 			reqMsgId:  msgId.msgId,
 			reqMsg:    query,
+			takeout:   takeout,
 		})
 
 	return true
+}
+
+// onlySetNeedPasswordFromError avoids overwriting Normal/Logout/Deleted with NeedPassword
+// when RPC results arrive out of order (e.g. delayed auth error after successful checkPassword).
+func (c *session) onlySetNeedPasswordFromError(ctx context.Context, hackId int64) {
+	switch c.sessList.cb.state {
+	case mtproto.AuthStateNormal, mtproto.AuthStateLogout, mtproto.AuthStateDeleted, mtproto.AuthStateUnknown:
+		return
+	}
+	c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNeedPassword, hackId)
 }
 
 func (c *session) onRpcResult(ctx context.Context, rpcResult *rpcApiMessage) {
@@ -513,7 +542,6 @@ func (c *session) onRpcResult(ctx context.Context, rpcResult *rpcApiMessage) {
 			_ = request
 			if rpcErr.Message() == "ENCRYPTED_MESSAGE_INVALID" {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateUnknown, 0)
-				// c.sessList.cb.cb.DeleteByAuthKeyId(c.sessList.authId)
 			}
 		} else {
 			c.sessList.changeAuthState(mtproto.AuthStatePermBound)
@@ -521,94 +549,103 @@ func (c *session) onRpcResult(ctx context.Context, rpcResult *rpcApiMessage) {
 	case *mtproto.TLAuthLogOut:
 		c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateLogout, 0)
 	case *mtproto.TLAuthSendCode:
-		if rpcErr == nil {
+		if rpcErr == nil && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authSentCode, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_SentCode)
-			if authSentCode.GetPredicateName() == mtproto.Predicate_auth_sentCodeSuccess {
-				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authSentCode.GetAuthorization().GetUser().GetId())
+			if authSentCode != nil && authSentCode.GetPredicateName() == mtproto.Predicate_auth_sentCodeSuccess {
+				if auth := authSentCode.GetAuthorization(); auth != nil && auth.GetUser() != nil {
+					c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, auth.GetUser().GetId())
+				}
 			}
-		} else {
-			// hack
+		} else if rpcErr != nil {
 			errMsg := rpcErr.Message()
 			if strings.HasPrefix(errMsg, "SESSION_PASSWORD_NEEDED_") {
 				vId := errMsg[len("SESSION_PASSWORD_NEEDED_"):]
 				hackId, _ := strconv.ParseInt(vId, 10, 64)
 				rpcErr.SetErrorMessage("SESSION_PASSWORD_NEEDED")
-				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNeedPassword, hackId)
+				c.onlySetNeedPasswordFromError(ctx, hackId)
 			}
 		}
 	case *mtproto.TLAuthExportLoginToken:
-		if rpcErr == nil {
+		if rpcErr == nil && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authLoginToken, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_LoginToken)
-			if authLoginToken.GetPredicateName() == mtproto.Predicate_auth_loginTokenSuccess {
-				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authLoginToken.GetAuthorization().GetUser().GetId())
+			if authLoginToken != nil && authLoginToken.GetPredicateName() == mtproto.Predicate_auth_loginTokenSuccess {
+				if auth := authLoginToken.GetAuthorization(); auth != nil && auth.GetUser() != nil {
+					c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, auth.GetUser().GetId())
+				}
 			}
-		} else {
-			// hack
+		} else if rpcErr != nil {
 			errMsg := rpcErr.Message()
 			if strings.HasPrefix(errMsg, "SESSION_PASSWORD_NEEDED_") {
 				vId := errMsg[len("SESSION_PASSWORD_NEEDED_"):]
 				hackId, _ := strconv.ParseInt(vId, 10, 64)
 				rpcErr.SetErrorMessage("SESSION_PASSWORD_NEEDED")
-				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNeedPassword, hackId)
+				c.onlySetNeedPasswordFromError(ctx, hackId)
 			}
 		}
 	case *mtproto.TLAuthSignIn:
-		if rpcErr == nil {
+		if rpcErr == nil && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
-			if authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization {
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
 			}
-		} else {
-			// hack
+		} else if rpcErr != nil {
 			errMsg := rpcErr.Message()
 			if strings.HasPrefix(errMsg, "SESSION_PASSWORD_NEEDED_") {
 				vId := errMsg[len("SESSION_PASSWORD_NEEDED_"):]
 				hackId, _ := strconv.ParseInt(vId, 10, 64)
 				rpcErr.SetErrorMessage("SESSION_PASSWORD_NEEDED")
-				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNeedPassword, hackId)
+				c.onlySetNeedPasswordFromError(ctx, hackId)
 			}
 		}
 	case *mtproto.TLAuthSignUp:
-		if rpcErr == nil {
+		if rpcErr == nil && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
-			if authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization {
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
+				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
+			}
+		}
+	case *mtproto.TLAuthFinishPasskeyLogin:
+		if rpcErr == nil && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
+			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
 			}
 		}
 	case *mtproto.TLAuthImportAuthorization:
-		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword {
+		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
-			if authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization {
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
 			}
 		}
 	case *mtproto.TLAuthCheckPassword:
-		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword {
+		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
-			if authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization {
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
 			}
 		}
 	case *mtproto.TLAuthRecoverPassword:
-		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword {
+		if rpcErr == nil && c.sessList.cb.state == mtproto.AuthStateNeedPassword && rpcResult.rpcResult != nil && rpcResult.rpcResult.Result != nil {
 			authAuthorization, _ := rpcResult.rpcResult.Result.(*mtproto.Auth_Authorization)
-			if authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization {
+			if authAuthorization != nil && authAuthorization.GetPredicateName() == mtproto.Predicate_auth_authorization && authAuthorization.GetUser() != nil {
 				c.sessList.cb.changeAuthState(ctx, mtproto.AuthStateNormal, authAuthorization.GetUser().GetId())
 			}
 		}
 	case *mtproto.TLUpdatesGetState:
 		hasCanSync = true
-		// c.canSync = true
 	case *mtproto.TLUpdatesGetDifference:
 		hasCanSync = true
-		// c.canSync = true
 	case *mtproto.TLUpdatesGetChannelDifference:
 		hasCanSync = true
-		// c.canSync = true
 	default:
 	}
 
-	c.sendRpcResult(ctx, rpcResult.MoveRpcResult())
+	// MoveRpcResult() clears rpcResult.rpcResult; duplicate delivery would get nil — guard to avoid sendRpcResult(nil).
+	rpcResultData := rpcResult.MoveRpcResult()
+	if rpcResultData != nil {
+		c.sendRpcResult(ctx, rpcResultData)
+	}
 	if hasCanSync {
 		c.canSync = true
 		gatewayId := c.getGatewayId()
@@ -617,7 +654,9 @@ func (c *session) onRpcResult(ctx context.Context, rpcResult *rpcApiMessage) {
 }
 
 func (c *session) sendRpcResult(ctx context.Context, rpcResult *mtproto.TLRpcResult) {
-	// TODO(@benqi): lookup inBoxMsg
+	if rpcResult == nil {
+		return
+	}
 	msgId := c.inQueue.Lookup(rpcResult.ReqMsgId)
 	if msgId == nil {
 		logx.WithContext(ctx).Errorf("not found msgId, maybe removed: %d", rpcResult.ReqMsgId)
